@@ -9,10 +9,10 @@ This repository contains data, code and analyses for our submission to LRE.
 ## Register tagging systems
 
 ### MAT
-[`output_MAT`](output_MAT) contains MAT's outputs for all individual parts of our corpus.
+[`output_MAT`](output_MAT) contains [MAT](https://sites.google.com/site/multidimensionaltagger/)'s outputs for all individual parts of our corpus.
 
 ### pseudobibeR
-[`output_pseudobiber/quotes_nonquotes_corpus`](output_pseudobiber/quotes_nonquotes_corpus) contains pseudobibeR's feature counts for Stanza and spaCy, as well as runtimes for spaCy. Stanza's CoNLL-U output and runtime can be found in [`output_stanza`](output_stanza).
+[`output_pseudobiber/quotes_nonquotes_corpus`](output_pseudobiber/quotes_nonquotes_corpus) contains [pseudobibeR](https://github.com/browndw/pseudobibeR)'s feature counts for [Stanza](https://github.com/stanfordnlp/stanza) and [spaCy](https://spacy.io), as well as runtimes for spaCy. Stanza's CoNLL-U output and runtime can be found in [`output_stanza`](output_stanza).
 
 To replicate these outputs, the following scripts can be used:
 - `annotate_stanza.py` runs Stanza to create CoNLL-U output
@@ -22,17 +22,17 @@ To replicate these outputs, the following scripts can be used:
 Note that both R scripts use an edited version of pseudobibeR (`pseudobiber_changes.R`) to be able to compute type-token ratios with a different window size. This makes them much slower (`output_pseudobiber/quotes_nonquotes_corpus/spacy_timings.csv`). Runtimes reported in the paper are therefore based on the unedited package (see `output_pseudobiber/quotes_nonquotes_corpus/spacy_timings_ttr100.csv`).
 
 ### pybiber
-[`output_pybiber`](output_pseudobiber) contains pybiber's feature counts and runtimes.
+[`output_pybiber`](output_pseudobiber) contains [pybiber](https://github.com/browndw/pybiber)'s feature counts and runtimes.
 
 To replicate these outputs, `feature_counts_pybiber.py` can be used. Alternatively, `feature_counts_pybiber_pipeline.py` could also be used -- it is, however, much slower.
 
 ### BiberPlus
-[`output_biberplus`](output_biberplus) contains BiberPlus' feature counts and runtimes.
+[`output_biberplus`](output_biberplus) contains [BiberPlus](https://github.com/davidjurgens/biberplus)' feature counts and runtimes.
 
 To replicate these outputs, `feature_counts_biberplus.py` can be used.
 
 ### Biberpy
-[`output_biberpy`](output_biberpy) contains Biberpy's feature counts and runtimes.
+[`output_biberpy`](output_biberpy) contains [Biberpy](https://github.com/ssharoff/biberpy)'s feature counts and runtimes.
 
 To replicate these results:
 - first, run `biberpy/spacydir2json.py` from the command line: `python spacydir2json.py quotes_nonquotes_corpus en_core_web_sm >quotes_nonquotes.json` (adjust paths as needed: `quotes_nonquotes_corpus` needs to point to the folder containing raw text files, `quotes_nonquotes.json` will be the output file)
@@ -42,4 +42,4 @@ To replicate these results:
 
 
 ## Analysis
-`analysis.qmd` is a Quarto document containing our analyses. [Easily readable HTML output is also available](https://htmlpreview.github.io/?https://github.com/AndreasBlombach/register_tagging_systems/blob/main/analysis.html).
+`analysis.qmd` is a Quarto document containing our analyses. [Easily readable HTML output is also available](https://htmlpreview.github.io/?https://github.com/AndreasBlombach/Register-tagging-systems/blob/main/analysis.html).
