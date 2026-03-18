@@ -1,0 +1,1397 @@
+---
+title: "Evaluating the impact of lexico-grammatical tagging systems on multidimensional analysis"
+author: "Andreas Blombach"
+date: last-modified
+date-format: long
+format:
+  html:
+    self-contained: true
+    toc: true
+    toc-depth: 3
+    code-fold: false
+    code-tools: true
+    theme: yeti
+    df-print: paged
+    fig-width: 8
+    fig-height: 5
+    link-external-icon: true
+---
+
+## Setup
+```{r}
+#| message: false
+library(tidyverse)
+library(readxl)
+library(psych)
+library(patchwork)
+library(skimr)
+library(paletteer)
+library(see)
+library(easystats)
+library(stargazer)
+library(lme4)
+library(ggtext)
+```
+
+Features -- this is a dataframe containing all linguistic features from Biber
+(1988), their names in the Biber tagger, in pseudobibeR/pybiber, MAT, BiberPlus,
+and, if applicable, in Biberpy and MFTE. It also contains their means, minimum
+and maximum values and standard deviations as well as their factor loadings in
+the original study (Biber 1988).
+```{r}
+#| warning: false
+#| message: false
+feats_loadings <- read_excel("features_loadings_biber1988.xlsx")
+```
+
+Feature selection for dimensions according to Biber (1988) -- this is a
+dataframe containing linguistic features and their positive (1) or negative (-1)
+association with a given dimension.
+```{r}
+#| warning: false
+#| message: false
+biber_dims <- read_csv("dims_biber1988.csv")
+```
+
+Scores from Egbert & Mahlberg (2020) that we're trying to replicate:
+```{r}
+#| warning: false
+#| message: false
+full_scores_egbert_mahlberg <- read_csv("egbert_mahlberg_dimension_scores.csv")
+```
+
+
+### MAT features etc.
+NB: Nini standardises features differently. We will deal with this later during
+*z*-standardisation.
+```{r}
+#| warning: false
+#| message: false
+files_statistics <- list.files("output_MAT/", r"(Statistics.+?uotes.csv)",
+                               recursive = TRUE, include.dirs = TRUE,
+                               full.names = TRUE)
+# files_zscores <- list.files("output_MAT/", r"(Zscores.+?uotes.csv)",
+#                             recursive = TRUE, include.dirs = TRUE,
+#                             full.names = TRUE)
+# files_dimensions <- list.files("output_MAT/", r"(Dimensions.+?uotes.csv)",
+#                                recursive = TRUE, include.dirs = TRUE,
+#                                full.names = TRUE)
+
+if(exists("nini_statistics")) rm(nini_statistics)
+
+for (file in files_statistics) {
+  corpus <- str_extract(file, r"(Statistics/Statistics_(.+?)[ _])", group = 1)
+  qnq <- str_extract(file, r"([ _](Quotes|Nonquotes))", group = 1)
+  if (!exists("nini_statistics")) {
+    nini_statistics <- read_csv(file) |>
+      select(!last_col()) |> # last column is garbage
+      head(-1) |> # summary statistics are not needed
+      mutate(corpus = corpus,
+             subcorpus = qnq) |>
+      select(corpus,
+             subcorpus,
+             Filename,
+             everything())
+  } else {
+    nini_statistics <- nini_statistics |>
+      bind_rows(read_csv(file) |>
+                  select(!last_col()) |>
+                  head(-1) |>
+                  mutate(corpus = corpus,
+                         subcorpus = qnq) |>
+                  select(corpus,
+                         subcorpus,
+                         Filename,
+                         everything()))
+  }
+}
+
+nini_statistics <- nini_statistics |>
+  mutate(subcorpus = str_to_lower(subcorpus))
+```
+
+
+### pseudobibeR
+[pseudobibeR](https://github.com/browndw/pseudobibeR) by David West Brown is an
+R package that extracts Biber's original 67 linguistic features from output from
+either udpipe or spaCy. Since udpipe's output is in CoNLL-U format, it is easy
+to adapt pseudobibeR to also accept CoNLL-U output from state-of-the-art systems
+like Stanza. NB: Outputs from different systems may have their own peculiarities,
+mostly depending on the version of the UD treebanks they were trained on. While
+pseudobibeR has been specifically adapted to udpipe and spaCy output, this isn't
+the case for Stanza.
+
+#### Using Stanza
+```{r}
+#| warning: false
+#| message: false
+pseudobiber_stanza_statistics <- read_csv("output_pseudobiber/quotes_nonquotes_corpus/stanza_pseudobiber_features.csv")
+```
+
+#### Using spaCy (via `spacyr`)
+```{r}
+#| warning: false
+#| message: false
+pseudobiber_spacy_sm_statistics <- read_csv("output_pseudobiber/quotes_nonquotes_corpus/spacy_sm_pseudobiber_features.csv")
+pseudobiber_spacy_md_statistics <- read_csv("output_pseudobiber/quotes_nonquotes_corpus/spacy_md_pseudobiber_features.csv")
+pseudobiber_spacy_lg_statistics <- read_csv("output_pseudobiber/quotes_nonquotes_corpus/spacy_lg_pseudobiber_features.csv")
+```
+
+
+### pybiber
+[pybiber](https://github.com/browndw/pybiber) is a reimplementation of
+pseudobibeR in Python which only uses spaCy. The results *should* be the same as
+those of pseudobibeR (using spaCy), but since there is no back-and-forth between
+R and Python, execution should be faster.
+```{r}
+#| warning: false
+#| message: false
+pybiber_spacy_sm_statistics <- read_tsv("output_pybiber/output_pybiber_sm.csv")
+pybiber_spacy_md_statistics <- read_tsv("output_pybiber/output_pybiber_md.csv")
+pybiber_spacy_lg_statistics <- read_tsv("output_pybiber/output_pybiber_lg.csv")
+pybiber_spacy_trf_statistics <- read_tsv("output_pybiber/output_pybiber_trf.csv")
+```
+
+```{r}
+pybiber_spacy_sm_statistics <- pybiber_spacy_sm_statistics |>
+  mutate(corpus = str_extract(doc_id, r"(^(\w+?)_)", group = 1),
+  subcorpus = str_extract(doc_id, r"(_((non)?quotes))", group = 1),
+  doc_id = str_extract(doc_id, r"(_(\w+)_(non)?quotes)", group = 1)) |>
+  select(doc_id, corpus, subcorpus, everything())
+pybiber_spacy_md_statistics <- pybiber_spacy_md_statistics |>
+  mutate(corpus = str_extract(doc_id, r"(^(\w+?)_)", group = 1),
+  subcorpus = str_extract(doc_id, r"(_((non)?quotes))", group = 1),
+  doc_id = str_extract(doc_id, r"(_(\w+)_(non)?quotes)", group = 1)) |>
+  select(doc_id, corpus, subcorpus, everything())
+pybiber_spacy_lg_statistics <- pybiber_spacy_lg_statistics |>
+  mutate(corpus = str_extract(doc_id, r"(^(\w+?)_)", group = 1),
+  subcorpus = str_extract(doc_id, r"(_((non)?quotes))", group = 1),
+  doc_id = str_extract(doc_id, r"(_(\w+)_(non)?quotes)", group = 1)) |>
+  select(doc_id, corpus, subcorpus, everything())
+pybiber_spacy_trf_statistics <- pybiber_spacy_trf_statistics |>
+  mutate(corpus = str_extract(doc_id, r"(^(\w+?)_)", group = 1),
+  subcorpus = str_extract(doc_id, r"(_((non)?quotes))", group = 1),
+  doc_id = str_extract(doc_id, r"(_(\w+)_(non)?quotes)", group = 1)) |>
+  select(doc_id, corpus, subcorpus, everything())
+```
+
+### BiberPlus
+[BiberPlus](https://github.com/davidjurgens/biberplus) is another Python package
+that extracts Biber's original 67 features. It also implements additional
+features, "inspired by the work of Grieve, Clarke, and colleagues".
+
+Initial part-of-speech tagging is done via spaCy's small (sm) model (with no
+option to change the model). All features except for type-token ratio and
+average word length are then computed and averaged over 1,000 token windows (a
+notable difference to all other programs). TTR is based on the first 400 tokens
+as in Biber's original implementation.
+
+To get an idea of how much influence the window size has, we re-ran Biberplus
+with 10,000 token windows. These results then have to be normalised to be
+comparable.
+
+```{r}
+#| warning: false
+#| message: false
+biberplus_statistics <- read_csv("output_biberplus/output_biberplus.csv")
+biberplus_statistics <- biberplus_statistics |>
+  mutate(corpus = str_extract(doc_id, r"(^(\w+?)_)", group = 1),
+  subcorpus = str_extract(doc_id, r"(_((non)?quotes))", group = 1),
+  doc_id = str_extract(doc_id, r"(_(\w+)_(non)?quotes)", group = 1)) |>
+  select(doc_id, corpus, subcorpus, everything())
+
+biberplus_10k_statistics <- read_csv("output_biberplus/output_biberplus_10k.csv")
+biberplus_10k_statistics <- biberplus_10k_statistics |>
+  mutate(corpus = str_extract(doc_id, r"(^(\w+?)_)", group = 1),
+  subcorpus = str_extract(doc_id, r"(_((non)?quotes))", group = 1),
+  doc_id = str_extract(doc_id, r"(_(\w+)_(non)?quotes)", group = 1)) |>
+  select(doc_id, corpus, subcorpus, everything()) |>
+  mutate(across(QUAN:X, ~ .x / 10))
+```
+
+### Biberpy
+[Biberpy](https://github.com/ssharoff/biberpy) is a collection of Python scripts
+by Serge Sharoff designed to extract Biber's linguistic features, although only
+48 features are currently implemented. It works with JSON output from spaCy (a
+script to produce such output is provided) or CONLL style output from other NLP
+pipelines (like UDPipe).
+
+All scripts are supposed to be run from the command line.
+
+We adapted Biberpy's spaCy script to be used with an entire folder of .txt
+files, then ran its biber-dim.py script to extract normalised feature counts:
+```
+python spacydir2json.py quotes_nonquotes_corpus en_core_web_sm >quotes_nonquotes.json
+python biber-dim.py -f json -l en -i quotes_nonquotes.json -o output_biberpy_sm.tsv
+```
+
+Since many features are normalised by clause count instead of document length
+(= token count), we changed this behaviour to make Biberpy more comparable to
+the other systems. We also need to multiply counts by 1,000 (normalised counts
+per 1,000 tokens).
+
+```{r}
+#| warning: false
+#| message: false
+biberpy_statistics <- read_tsv("output_biberpy/output_biberpy_sm.tsv")
+biberpy_statistics <- biberpy_statistics |>
+  mutate(corpus = str_extract(doc_id, r"(^(\w+?)_)", group = 1),
+  subcorpus = str_extract(doc_id, r"(_((non)?quotes))", group = 1),
+  doc_id = str_extract(doc_id, r"(_(\w+)_(non)?quotes)", group = 1)) |>
+  select(doc_id, corpus, subcorpus, everything()) |>
+  mutate(across(A01.pastVerbs:last_col() & !J43.TTR:J44.wordLength, ~ .x * 1000))
+```
+
+
+## Computing *z*-scores
+### MAT
+To get comparable scores, type-token ratio has to be between 0 and 100 (which is
+already unusual, but MAT's TTR values have a really weird range), and features
+normalised on the total number of tokens need to be multiplied by 10.
+```{r}
+nini_zscores <- nini_statistics |>
+  mutate(TTR = TTR / 4) |>
+  mutate(across(AMP:XX0, ~ .x * 10)) |>
+  pivot_longer(cols = AWL:XX0, names_to = "feature_MAT") |>
+  left_join(feats_loadings |> select(mean, sd, `Linguistic feature`:feature_MAT, factor1:factor5), by = "feature_MAT") |>
+  rename(doc_id = Filename) |>
+  mutate(doc_id = str_extract(doc_id, r"((\w+)_(non)?quotes)", group = 1)) |>
+  select(doc_id, corpus, subcorpus, everything()) |>
+  mutate(zscore = (value - mean) / sd) |>
+  arrange(corpus, doc_id, subcorpus, feature_pseudobiber) # |>
+  # mutate(zscore = ifelse(zscore > 5, 5, zscore), # possible correction for small and large values
+  #        zscore = ifelse(zscore < -5, -5, zscore))
+nini_zscores
+```
+
+### pseudobibeR
+Convenience function to compute *z*-scores:
+```{r}
+get_zscores <- function(statistics, correction = FALSE) {
+  zscores <- statistics |>
+    mutate(f_43_type_token = f_43_type_token * 100) |>
+    pivot_longer(cols = f_01_past_tense:last_col(), names_to = "feature_pseudobiber") |>
+    left_join(feats_loadings |> select(mean, sd, `Linguistic feature`:feature_MAT, factor1:factor5), by = "feature_pseudobiber") |>
+    mutate(zscore = (value - mean) / sd)
+  
+  if (correction) {
+    zscores <- zscores |>
+      mutate(zscore = ifelse(zscore > 5, 5, zscore), # correction for small and large values
+             zscore = ifelse(zscore < -5, -5, zscore))
+  }
+  
+  return(zscores)
+}
+```
+
+
+#### Using Stanza
+```{r}
+pseudobiber_stanza_zscores <- pseudobiber_stanza_statistics |>
+  get_zscores()
+pseudobiber_stanza_zscores
+```
+
+#### Using spaCy
+```{r}
+pseudobiber_spacy_sm_zscores <- pseudobiber_spacy_sm_statistics |>
+  get_zscores()
+pseudobiber_spacy_sm_zscores
+
+pseudobiber_spacy_md_zscores <- pseudobiber_spacy_md_statistics |>
+  get_zscores()
+pseudobiber_spacy_md_zscores
+
+pseudobiber_spacy_lg_zscores <- pseudobiber_spacy_lg_statistics |>
+  get_zscores()
+pseudobiber_spacy_lg_zscores
+```
+
+### pybiber
+```{r}
+pybiber_spacy_sm_zscores <- pybiber_spacy_sm_statistics |>
+  get_zscores()
+pybiber_spacy_sm_zscores
+
+pybiber_spacy_md_zscores <- pybiber_spacy_md_statistics |>
+  get_zscores()
+pybiber_spacy_md_zscores
+
+pybiber_spacy_lg_zscores <- pybiber_spacy_lg_statistics |>
+  get_zscores()
+pybiber_spacy_lg_zscores
+
+pybiber_spacy_trf_zscores <- pybiber_spacy_trf_statistics |>
+  get_zscores()
+pybiber_spacy_trf_zscores
+```
+
+### BiberPlus
+```{r}
+biberplus_zscores <- biberplus_statistics |>
+  mutate(TTR = TTR * 100) |>
+  pivot_longer(cols = QUAN:last_col(), names_to = "feature_biberplus") |>
+  left_join(feats_loadings |> select(mean, sd, `Linguistic feature`:feature_biberplus, factor1:factor5),
+            by = "feature_biberplus") |>
+  filter(!is.na(feature_biber)) |>
+  mutate(zscore = (value - mean) / sd) |>
+  select(doc_id:subcorpus, feature_pseudobiber, value:feature_biber, feature_MAT, feature_biberplus, factor1:zscore) |>
+  arrange(corpus, doc_id, subcorpus, feature_pseudobiber)
+biberplus_zscores
+
+biberplus_10k_zscores <- biberplus_10k_statistics |>
+  mutate(TTR = TTR * 100) |>
+  pivot_longer(cols = QUAN:last_col(), names_to = "feature_biberplus") |>
+  left_join(feats_loadings |> select(mean, sd, `Linguistic feature`:feature_biberplus, factor1:factor5),
+            by = "feature_biberplus") |>
+  filter(!is.na(feature_biber)) |>
+  mutate(zscore = (value - mean) / sd) |>
+  select(doc_id:subcorpus, feature_pseudobiber, value:feature_biber, feature_MAT, feature_biberplus, factor1:zscore) |>
+  arrange(corpus, doc_id, subcorpus, feature_pseudobiber)
+biberplus_10k_zscores
+```
+
+### Biberpy
+Note that Biberpy does not extract all features from Biber (1988).
+```{r}
+biberpy_zscores <- biberpy_statistics |>
+  mutate(J43.TTR = J43.TTR * 100) |>
+  pivot_longer(cols = A01.pastVerbs:last_col(), names_to = "feature_biberpy") |>
+  left_join(feats_loadings |> select(mean, sd, `Linguistic feature`:feature_biberpy, factor1:factor5),
+            by = "feature_biberpy") |>
+  filter(!is.na(feature_biber)) |>
+  mutate(zscore = (value - mean) / sd) |>
+  select(doc_id:subcorpus, feature_pseudobiber, value:feature_biber, feature_MAT, feature_biberpy, factor1:zscore) |>
+  arrange(corpus, doc_id, subcorpus, feature_pseudobiber)
+biberpy_zscores
+```
+
+
+
+
+## Computing dimension scores
+```{r}
+add_zscores <- function(zscores, min_mean = FALSE) {
+  zscores <- biber_dims |>
+    left_join(zscores, by = "Linguistic feature")
+  
+  missing_features <- zscores |>
+    filter(is.na(doc_id)) |>
+    pull(`Linguistic feature`)
+  
+  if (length(missing_features)) {
+    warning("Missing features: ", str_c(missing_features, collapse = ", "))
+  }
+  
+  zscores <- zscores |>
+    filter(!is.na(doc_id))
+  
+  if (min_mean && is.numeric(min_mean) && min_mean > 0) {
+    zscores <- zscores |>
+      filter(mean > min_mean)
+  }
+  
+  zscores |>
+    summarise(Dimension1 = sum(zscore * dim1),
+              Dimension2 = sum(zscore * dim2),
+              Dimension3 = sum(zscore * dim3),
+              Dimension4 = sum(zscore * dim4),
+              Dimension5 = sum(zscore * dim5),
+              .by = doc_id:subcorpus)
+}
+```
+
+Adding *z*-scores, not using features with a mean of 1 or below (as proposed by
+Nini):
+```{r}
+min_mean_value <- 1 # to be able to re-run this easily with other values or FALSE
+
+nini_total <- nini_zscores |>
+  add_zscores(min_mean = min_mean_value)
+
+pseudobiber_stanza_total <- pseudobiber_stanza_zscores |>
+  add_zscores(min_mean = min_mean_value)
+
+pseudobiber_spacy_sm_total <- pseudobiber_spacy_sm_zscores |>
+  add_zscores(min_mean = min_mean_value)
+
+pseudobiber_spacy_md_total <- pseudobiber_spacy_md_zscores |>
+  add_zscores(min_mean = min_mean_value)
+
+pseudobiber_spacy_lg_total <- pseudobiber_spacy_lg_zscores |>
+  add_zscores(min_mean = min_mean_value)
+
+pybiber_spacy_sm_total <- pybiber_spacy_sm_zscores |>
+  add_zscores(min_mean = min_mean_value)
+
+pybiber_spacy_md_total <- pybiber_spacy_md_zscores |>
+  add_zscores(min_mean = min_mean_value)
+
+pybiber_spacy_lg_total <- pybiber_spacy_lg_zscores |>
+  add_zscores(min_mean = min_mean_value)
+
+pybiber_spacy_trf_total <- pybiber_spacy_trf_zscores |>
+  add_zscores(min_mean = min_mean_value)
+
+biberplus_total <- biberplus_zscores |>
+  add_zscores(min_mean = min_mean_value)
+
+biberplus_10k_total <- biberplus_10k_zscores |>
+  add_zscores(min_mean = min_mean_value)
+
+biberpy_total <- biberpy_zscores |>
+  add_zscores(min_mean = min_mean_value)
+```
+
+Same thing, but unrestricted (as in Biber's original study)
+```{r}
+min_mean_value <- FALSE
+
+nini_total_all <- nini_zscores |>
+  add_zscores(min_mean = min_mean_value)
+
+pseudobiber_stanza_total_all <- pseudobiber_stanza_zscores |>
+  add_zscores(min_mean = min_mean_value)
+
+pseudobiber_spacy_sm_total_all <- pseudobiber_spacy_sm_zscores |>
+  add_zscores(min_mean = min_mean_value)
+
+pseudobiber_spacy_md_total_all <- pseudobiber_spacy_md_zscores |>
+  add_zscores(min_mean = min_mean_value)
+
+pseudobiber_spacy_lg_total_all <- pseudobiber_spacy_lg_zscores |>
+  add_zscores(min_mean = min_mean_value)
+
+pybiber_spacy_sm_total_all <- pybiber_spacy_sm_zscores |>
+  add_zscores(min_mean = min_mean_value)
+
+pybiber_spacy_md_total_all <- pybiber_spacy_md_zscores |>
+  add_zscores(min_mean = min_mean_value)
+
+pybiber_spacy_lg_total_all <- pybiber_spacy_lg_zscores |>
+  add_zscores(min_mean = min_mean_value)
+
+pybiber_spacy_trf_total_all <- pybiber_spacy_trf_zscores |>
+  add_zscores(min_mean = min_mean_value)
+
+biberplus_total_all <- biberplus_zscores |>
+  add_zscores(min_mean = min_mean_value)
+
+biberplus_10k_total_all <- biberplus_10k_zscores |>
+  add_zscores(min_mean = min_mean_value)
+
+biberpy_total_all <- biberpy_zscores |>
+  add_zscores(min_mean = min_mean_value)
+```
+
+
+## Comparisons
+
+### pseudobibeR vs. pybiber (spaCy)
+The results from these two should be identical if the same models (sm, md or lg)
+are used, so let's compare them first.
+```{r}
+pb <- bind_rows(
+  list(
+    pseudobiber_spacy_sm_total |>
+      mutate(method = "pseudobibeR w/ spaCy (sm)", .before = doc_id),
+    pseudobiber_spacy_md_total |>
+      mutate(method = "pseudobibeR w/ spaCy (md)", .before = doc_id),
+    pseudobiber_spacy_sm_total |>
+      mutate(method = "pseudobibeR w/ spaCy (lg)", .before = doc_id),
+    pybiber_spacy_sm_total |>
+      mutate(method = "pybiber w/ spaCy (sm)", .before = doc_id),
+    pybiber_spacy_md_total |>
+      mutate(method = "pybiber w/ spaCy (md)", .before = doc_id),
+    pybiber_spacy_sm_total |>
+      mutate(method = "pybiber w/ spaCy (lg)", .before = doc_id)
+  )
+) |>
+  mutate(subcorpus = factor(subcorpus,
+                            levels = c("quotes", "nonquotes"),
+                            labels = c("Dialogue", "Narration")))
+```
+
+```{r}
+pb |>
+  group_by(corpus, subcorpus, method) |>
+  skim() |>
+  select(-n_missing, -complete_rate)
+```
+
+
+While the values aren't *identical* as they should be (which may be a result of
+either pybiber or pseudobibeR not deleting superficial tokens related to UD's
+tokenisation preferences), it's hard to spot these differences in the plots --
+so neither the choice of pybiber vs. pseudobibeR nor the choice of spaCy's
+specific language model should make much of a difference in practice. (But we
+haven't looked at the transformer model yet.)
+```{r}
+#| fig-width: 15
+#| fig-height: 15
+d1 <- pb |>
+  ggplot(aes(x = corpus, y = Dimension1, colour = subcorpus)) +
+  geom_violin(position = position_dodge(0.9), aes(fill = after_scale(ggplot2::alpha(colour, 0.1)))) +
+  geom_boxplot(position = position_dodge(0.9), width = 0.1, outlier.alpha = .7, outlier.size = 1) +
+  facet_wrap(vars(method)) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto")
+
+d2 <- pb |>
+  ggplot(aes(x = corpus, y = Dimension2, colour = subcorpus)) +
+  geom_violin(position = position_dodge(0.9), aes(fill = after_scale(ggplot2::alpha(colour, 0.1)))) +
+  geom_boxplot(position = position_dodge(0.9), width = 0.1, outlier.alpha = .7, outlier.size = 1) +
+  facet_wrap(vars(method)) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto")
+
+d3 <- pb |>
+  ggplot(aes(x = corpus, y = Dimension3, colour = subcorpus)) +
+  geom_violin(position = position_dodge(0.9), aes(fill = after_scale(ggplot2::alpha(colour, 0.1)))) +
+  geom_boxplot(position = position_dodge(0.9), width = 0.1, outlier.alpha = .7, outlier.size = 1) +
+  facet_wrap(vars(method)) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto")
+
+d4 <- pb |>
+  ggplot(aes(x = corpus, y = Dimension4, colour = subcorpus)) +
+  geom_violin(position = position_dodge(0.9), aes(fill = after_scale(ggplot2::alpha(colour, 0.1)))) +
+  geom_boxplot(position = position_dodge(0.9), width = 0.1, outlier.alpha = .7, outlier.size = 1) +
+  facet_wrap(vars(method)) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto")
+
+d5 <- pb |>
+  ggplot(aes(x = corpus, y = Dimension5, colour = subcorpus)) +
+  geom_violin(position = position_dodge(0.9), aes(fill = after_scale(ggplot2::alpha(colour, 0.1)))) +
+  geom_boxplot(position = position_dodge(0.9), width = 0.1, outlier.alpha = .7, outlier.size = 1) +
+  facet_wrap(vars(method)) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto")
+
+d1 + d2 + d3 + d4 + d5 +
+  plot_layout(guides = "collect",
+              axis_titles = "collect",
+              ncol = 1)
+```
+
+
+
+A closer look at dimension 1, this time without Nini's filter:
+```{r}
+#| fig-width: 15
+pb2 <- bind_rows(
+  list(
+    pseudobiber_spacy_sm_total_all |>
+      mutate(method = "pseudobibeR w/ spaCy (sm)", .before = doc_id),
+    pseudobiber_spacy_md_total_all |>
+      mutate(method = "pseudobibeR w/ spaCy (md)", .before = doc_id),
+    pseudobiber_spacy_sm_total_all |>
+      mutate(method = "pseudobibeR w/ spaCy (lg)", .before = doc_id),
+    pybiber_spacy_sm_total_all |>
+      mutate(method = "pybiber w/ spaCy (sm)", .before = doc_id),
+    pybiber_spacy_md_total_all |>
+      mutate(method = "pybiber w/ spaCy (md)", .before = doc_id),
+    pybiber_spacy_sm_total_all |>
+      mutate(method = "pybiber w/ spaCy (lg)", .before = doc_id)
+  )
+) |>
+  mutate(subcorpus = factor(subcorpus,
+                            levels = c("quotes", "nonquotes"),
+                            labels = c("Dialogue", "Narration")))
+
+pb2 |>
+  ggplot(aes(x = corpus, y = Dimension1, colour = subcorpus)) +
+  geom_violin(position = position_dodge(0.9), aes(fill = after_scale(ggplot2::alpha(colour, 0.1)))) +
+  geom_boxplot(position = position_dodge(0.9), width = 0.1, outlier.alpha = .7, outlier.size = 1) +
+  facet_wrap(vars(method), scales = "free_y") +
+  scale_colour_paletteer_d("colorblindr::OkabeIto")
+```
+
+### Window sizes in BiberPlus
+How much does window size influence the results when using BiberPlus?
+```{r}
+bp <- bind_rows(
+  list(
+    biberplus_total_all |>
+      mutate(method = "BiberPlus (1,000 tokens)", .before = doc_id),
+    biberplus_10k_total_all |>
+      mutate(method = "BiberPlus (10,000 tokens)", .before = doc_id)
+  )
+) |>
+  mutate(subcorpus = factor(subcorpus,
+                            levels = c("quotes", "nonquotes"),
+                            labels = c("Dialogue", "Narration")))
+```
+
+```{r}
+bp |>
+  group_by(corpus, subcorpus, method) |>
+  skim() |>
+  select(-n_missing, -complete_rate)
+```
+
+While the differences aren't huge, they are noticeable for some dimensions.
+```{r}
+#| fig-width: 15
+#| fig-height: 15
+d1 <- bp |>
+  ggplot(aes(x = corpus, y = Dimension1, colour = subcorpus)) +
+  geom_violin(position = position_dodge(0.9), aes(fill = after_scale(ggplot2::alpha(colour, 0.1)))) +
+  geom_boxplot(position = position_dodge(0.9), width = 0.1, outlier.alpha = .7, outlier.size = 1) +
+  facet_wrap(vars(method)) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto")
+
+d2 <- bp |>
+  ggplot(aes(x = corpus, y = Dimension2, colour = subcorpus)) +
+  geom_violin(position = position_dodge(0.9), aes(fill = after_scale(ggplot2::alpha(colour, 0.1)))) +
+  geom_boxplot(position = position_dodge(0.9), width = 0.1, outlier.alpha = .7, outlier.size = 1) +
+  facet_wrap(vars(method)) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto")
+
+d3 <- bp |>
+  ggplot(aes(x = corpus, y = Dimension3, colour = subcorpus)) +
+  geom_violin(position = position_dodge(0.9), aes(fill = after_scale(ggplot2::alpha(colour, 0.1)))) +
+  geom_boxplot(position = position_dodge(0.9), width = 0.1, outlier.alpha = .7, outlier.size = 1) +
+  facet_wrap(vars(method)) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto")
+
+d4 <- bp |>
+  ggplot(aes(x = corpus, y = Dimension4, colour = subcorpus)) +
+  geom_violin(position = position_dodge(0.9), aes(fill = after_scale(ggplot2::alpha(colour, 0.1)))) +
+  geom_boxplot(position = position_dodge(0.9), width = 0.1, outlier.alpha = .7, outlier.size = 1) +
+  facet_wrap(vars(method)) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto")
+
+d5 <- bp |>
+  ggplot(aes(x = corpus, y = Dimension5, colour = subcorpus)) +
+  geom_violin(position = position_dodge(0.9), aes(fill = after_scale(ggplot2::alpha(colour, 0.1)))) +
+  geom_boxplot(position = position_dodge(0.9), width = 0.1, outlier.alpha = .7, outlier.size = 1) +
+  facet_wrap(vars(method)) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto")
+
+d1 + d2 + d3 + d4 + d5 +
+  plot_layout(guides = "collect",
+              axis_titles = "collect",
+              ncol = 1)
+```
+
+
+### MAT vs. pseudobibeR (Stanza) vs. pybiber (spaCy) vs. BiberPlus vs. Biberpy
+Next, we'll compare MAT, pseudobibeR using Stanza, pybibeR using spaCy (only the
+small and transformer models for the greatest possible contrast), BiberPlus and
+Biberpy.
+
+We'll first include Nini's filter for feature exclusion.
+```{r}
+full <- bind_rows(
+  list(
+    nini_total |>
+      mutate(method = "MAT", .before = doc_id),
+    pseudobiber_stanza_total |>
+      mutate(method = "pseudobibeR\n(Stanza)", .before = doc_id),
+    pseudobiber_spacy_sm_total |>
+      mutate(method = "pseudobibeR\n(spaCy, sm)", .before = doc_id),
+    pybiber_spacy_sm_total |>
+      mutate(method = "pybiber\n(spaCy, sm)", .before = doc_id),
+#    pybiber_spacy_trf_total |>
+#      mutate(method = "pybiber\n(spaCy, trf)", .before = doc_id),
+    biberplus_total |>
+      mutate(method = "BiberPlus\n(spaCy, sm, 1k tokens)", .before = doc_id),
+    biberplus_10k_total |>
+      mutate(method = "BiberPlus\n(spaCy, sm, 10k tokens)", .before = doc_id),
+    biberpy_total |>
+      mutate(method = "Biberpy\n(spaCy, sm)", .before = doc_id)
+  )
+) |>
+  mutate(subcorpus = factor(subcorpus,
+                            levels = c("quotes", "nonquotes"),
+                            labels = c("Dialogue", "Narration")),
+         method = fct_inorder(method))
+
+n_comparisons <- full$method |> levels() |> length()
+```
+
+Biberpy is the clearest outlier among the different systems.
+
+Results from BiberPlus exhibit the second-largest differences from all others,
+especially on dimensions 2 and 5.
+
+Looking at MAT, pseudobibeR and pybiber:
+
+- Interestingly, results from Stanza and spaCy don't seem to differ too much
+  from each other (but slightly more than those from different spaCy models).
+- MAT's results differ a little more from the others (especially on dimension 3),
+  but are surprisingly similar in general.
+
+
+```{r}
+#| fig-width: 12
+#| fig-height: 14
+d1 <- full |>
+  ggplot(aes(x = corpus, y = Dimension1, colour = subcorpus)) +
+  geom_violin(position = position_dodge(0.9), aes(fill = after_scale(ggplot2::alpha(colour, 0.1)))) +
+  geom_boxplot(position = position_dodge(0.9), width = 0.1, outlier.alpha = .7, outlier.size = 1) +
+  facet_wrap(vars(method), ncol = n_comparisons) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto")
+
+d2 <- full |>
+  ggplot(aes(x = corpus, y = Dimension2, colour = subcorpus)) +
+  geom_violin(position = position_dodge(0.9), aes(fill = after_scale(ggplot2::alpha(colour, 0.1)))) +
+  geom_boxplot(position = position_dodge(0.9), width = 0.1, outlier.alpha = .7, outlier.size = 1) +
+  facet_wrap(vars(method), ncol = n_comparisons) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto")
+
+d3 <- full |>
+  ggplot(aes(x = corpus, y = Dimension3, colour = subcorpus)) +
+  geom_violin(position = position_dodge(0.9), aes(fill = after_scale(ggplot2::alpha(colour, 0.1)))) +
+  geom_boxplot(position = position_dodge(0.9), width = 0.1, outlier.alpha = .7, outlier.size = 1) +
+  facet_wrap(vars(method), ncol = n_comparisons) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto")
+
+d4 <- full |>
+  ggplot(aes(x = corpus, y = Dimension4, colour = subcorpus)) +
+  geom_violin(position = position_dodge(0.9), aes(fill = after_scale(ggplot2::alpha(colour, 0.1)))) +
+  geom_boxplot(position = position_dodge(0.9), width = 0.1, outlier.alpha = .7, outlier.size = 1) +
+  facet_wrap(vars(method), ncol = n_comparisons) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto")
+
+d5 <- full |>
+  ggplot(aes(x = corpus, y = Dimension5, colour = subcorpus)) +
+  geom_violin(position = position_dodge(0.9), aes(fill = after_scale(ggplot2::alpha(colour, 0.1)))) +
+  geom_boxplot(position = position_dodge(0.9), width = 0.1, outlier.alpha = .7, outlier.size = 1) +
+  facet_wrap(vars(method), ncol = n_comparisons) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto")
+
+d1 + d2 + d3 + d4 + d5 +
+  plot_layout(guides = "collect",
+              axis_titles = "collect",
+              ncol = 1)
+
+# only boxplots:
+d1 <- full |>
+  ggplot(aes(x = corpus, y = Dimension1, colour = subcorpus)) +
+  geom_boxplot(position = position_dodge(0.9)) +
+  facet_wrap(vars(method), ncol = n_comparisons) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto") +
+  labs(x = "Corpus", y = "Dimension 1", colour = "Subcorpus")
+
+d2 <- full |>
+  ggplot(aes(x = corpus, y = Dimension2, colour = subcorpus)) +
+  geom_boxplot(position = position_dodge(0.9)) +
+  facet_wrap(vars(method), ncol = n_comparisons) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto") +
+  labs(x = "Corpus", y = "Dimension 2", colour = "Subcorpus")
+
+d3 <- full |>
+  ggplot(aes(x = corpus, y = Dimension3, colour = subcorpus)) +
+  geom_boxplot(position = position_dodge(0.9)) +
+  facet_wrap(vars(method), ncol = n_comparisons) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto") +
+  labs(x = "Corpus", y = "Dimension 3", colour = "Subcorpus")
+
+d4 <- full |>
+  ggplot(aes(x = corpus, y = Dimension4, colour = subcorpus)) +
+  geom_boxplot(position = position_dodge(0.9)) +
+  facet_wrap(vars(method), ncol = n_comparisons) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto") +
+  labs(x = "Corpus", y = "Dimension 4", colour = "Subcorpus")
+
+d5 <- full |>
+  ggplot(aes(x = corpus, y = Dimension5, colour = subcorpus)) +
+  geom_boxplot(position = position_dodge(0.9)) +
+  facet_wrap(vars(method), ncol = n_comparisons) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto") +
+  labs(x = "Corpus", y = "Dimension 5", colour = "Subcorpus")
+
+# 11.5x11
+d2 + d3 + d4 + d5 +
+  plot_layout(guides = "collect",
+              axis_titles = "collect",
+              ncol = 1)
+```
+
+If we compare these results to those from Egbert and Mahlberg (2020) -- where
+only dimension 1 is available -- we see more pronounced differences. However,
+these are likely mostly due to the exclusion of several features in our analysis.
+```{r}
+#| fig-width: 12
+#| fig-height: 3
+biber_comparison_filtered <- full_scores_egbert_mahlberg |>
+  select(doc_id:subcorpus, Biber_D1) |>
+  mutate(method = "Biber Tagger", .before = doc_id,
+         subcorpus = factor(subcorpus)) |>
+  rename(Dimension1 = Biber_D1) |>
+  bind_rows(full |> select(method:Dimension1)) |>
+  mutate(method = fct_inorder(method))
+
+biber_comparison_filtered |>
+  ggplot(aes(x = corpus, y = Dimension1, colour = subcorpus)) +
+  geom_violin(position = position_dodge(0.9), aes(fill = after_scale(ggplot2::alpha(colour, 0.1)))) +
+  geom_boxplot(position = position_dodge(0.9), width = 0.1, outlier.alpha = .7, outlier.size = 1) +
+  facet_wrap(vars(method), ncol = n_comparisons + 1) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto")
+
+# only boxplots for paper (13x5):
+biber_comparison_filtered |>
+  ggplot(aes(x = corpus, y = Dimension1, colour = subcorpus)) +
+  geom_boxplot(position = position_dodge(0.9)) +
+  facet_wrap(vars(method), ncol = n_comparisons + 1) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto") +
+  labs(x = "Corpus", y = "Dimension 1", colour = "Subcorpus")
+```
+
+If we compare our dimensions using all features associated with them according
+to Biber (1988), we get results that are more dissimilar.
+```{r}
+#| fig-width: 12
+#| fig-height: 14
+full_all <- bind_rows(
+  list(
+    nini_total_all |>
+      mutate(method = "MAT", .before = doc_id),
+    pseudobiber_stanza_total_all |>
+      mutate(method = "pseudobibeR\n(Stanza)", .before = doc_id),
+    pseudobiber_spacy_sm_total_all |>
+      mutate(method = "pseudobibeR\n(spaCy, sm)", .before = doc_id),
+    pybiber_spacy_sm_total_all |>
+      mutate(method = "pybiber\n(spaCy, sm)", .before = doc_id),
+    biberplus_total_all |>
+      mutate(method = "BiberPlus\n(spaCy, sm, 1k tokens)", .before = doc_id),
+    biberplus_10k_total_all |>
+      mutate(method = "BiberPlus\n(spaCy, sm, 10k tokens)", .before = doc_id),
+    biberpy_total_all |>
+      mutate(method = "Biberpy\n(spaCy, sm)", .before = doc_id)
+  )
+) |>
+  mutate(subcorpus = factor(subcorpus,
+                            levels = c("quotes", "nonquotes"),
+                            labels = c("Dialogue", "Narration")),
+         method = fct_inorder(method))
+
+n_comparisons_all <- full_all$method |> levels() |> length()
+
+d1 <- full_all |>
+  ggplot(aes(x = corpus, y = Dimension1, colour = subcorpus)) +
+  geom_violin(position = position_dodge(0.9), aes(fill = after_scale(ggplot2::alpha(colour, 0.1)))) +
+  geom_boxplot(position = position_dodge(0.9), width = 0.1, outlier.alpha = .7, outlier.size = 1) +
+  facet_wrap(vars(method), ncol = n_comparisons_all) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto")
+
+d2 <- full_all |>
+  ggplot(aes(x = corpus, y = Dimension2, colour = subcorpus)) +
+  geom_violin(position = position_dodge(0.9), aes(fill = after_scale(ggplot2::alpha(colour, 0.1)))) +
+  geom_boxplot(position = position_dodge(0.9), width = 0.1, outlier.alpha = .7, outlier.size = 1) +
+  facet_wrap(vars(method), ncol = n_comparisons_all) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto")
+
+d3 <- full_all |>
+  ggplot(aes(x = corpus, y = Dimension3, colour = subcorpus)) +
+  geom_violin(position = position_dodge(0.9), aes(fill = after_scale(ggplot2::alpha(colour, 0.1)))) +
+  geom_boxplot(position = position_dodge(0.9), width = 0.1, outlier.alpha = .7, outlier.size = 1) +
+  facet_wrap(vars(method), ncol = n_comparisons_all) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto")
+
+d4 <- full_all |>
+  ggplot(aes(x = corpus, y = Dimension4, colour = subcorpus)) +
+  geom_violin(position = position_dodge(0.9), aes(fill = after_scale(ggplot2::alpha(colour, 0.1)))) +
+  geom_boxplot(position = position_dodge(0.9), width = 0.1, outlier.alpha = .7, outlier.size = 1) +
+  facet_wrap(vars(method), ncol = n_comparisons_all) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto")
+
+d5 <- full_all |>
+  ggplot(aes(x = corpus, y = Dimension5, colour = subcorpus)) +
+  geom_violin(position = position_dodge(0.9), aes(fill = after_scale(ggplot2::alpha(colour, 0.1)))) +
+  geom_boxplot(position = position_dodge(0.9), width = 0.1, outlier.alpha = .7, outlier.size = 1) +
+  facet_wrap(vars(method), ncol = n_comparisons_all) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto")
+
+d1 + d2 + d3 + d4 + d5 +
+  plot_layout(guides = "collect",
+              axis_titles = "collect",
+              ncol = 1)
+
+# only boxplots:
+d1 <- full_all |>
+  ggplot(aes(x = corpus, y = Dimension1, colour = subcorpus)) +
+  geom_boxplot(position = position_dodge(0.9)) +
+  facet_wrap(vars(method), ncol = n_comparisons_all) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto") +
+  labs(x = "Corpus", y = "Dimension 1", colour = "Subcorpus")
+
+d2 <- full_all |>
+  ggplot(aes(x = corpus, y = Dimension2, colour = subcorpus)) +
+  geom_boxplot(position = position_dodge(0.9)) +
+  facet_wrap(vars(method), ncol = n_comparisons_all) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto") +
+  labs(x = "Corpus", y = "Dimension 2", colour = "Subcorpus")
+
+d3 <- full_all |>
+  ggplot(aes(x = corpus, y = Dimension3, colour = subcorpus)) +
+  geom_boxplot(position = position_dodge(0.9)) +
+  facet_wrap(vars(method), ncol = n_comparisons_all) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto") +
+  labs(x = "Corpus", y = "Dimension 3", colour = "Subcorpus")
+
+d4 <- full_all |>
+  ggplot(aes(x = corpus, y = Dimension4, colour = subcorpus)) +
+  geom_boxplot(position = position_dodge(0.9)) +
+  facet_wrap(vars(method), ncol = n_comparisons_all) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto") +
+  labs(x = "Corpus", y = "Dimension 4", colour = "Subcorpus")
+
+d5 <- full_all |>
+  ggplot(aes(x = corpus, y = Dimension5, colour = subcorpus)) +
+  geom_boxplot(position = position_dodge(0.9)) +
+  facet_wrap(vars(method), ncol = n_comparisons_all) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto") +
+  labs(x = "Corpus", y = "Dimension 5", colour = "Subcorpus")
+
+# 11.5x11
+d2 + d3 + d4 + d5 +
+  plot_layout(guides = "collect",
+              axis_titles = "collect",
+              ncol = 1)
+```
+
+These are, however, much closer to the results from the Biber Tagger:
+```{r}
+#| fig-width: 12
+#| fig-height: 3
+biber_comparison <- full_scores_egbert_mahlberg |>
+  select(doc_id:subcorpus, Biber_D1) |>
+  mutate(method = "Biber Tagger", .before = doc_id,
+         subcorpus = factor(subcorpus)) |>
+  rename(Dimension1 = Biber_D1) |>
+  bind_rows(full_all |> select(method:Dimension1)) |>
+  mutate(method = fct_inorder(method))
+
+biber_comparison |>
+  ggplot(aes(x = corpus, y = Dimension1, colour = subcorpus)) +
+  geom_violin(position = position_dodge(0.9), aes(fill = after_scale(ggplot2::alpha(colour, 0.1)))) +
+  geom_boxplot(position = position_dodge(0.9), width = 0.1, outlier.alpha = .7, outlier.size = 1) +
+  facet_wrap(vars(method), ncol = n_comparisons_all + 1) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto")
+
+# paper (13x5)
+d1_bc <- biber_comparison |>
+  ggplot(aes(x = corpus, y = Dimension1, colour = subcorpus)) +
+  geom_boxplot(position = position_dodge(0.9)) +
+  facet_wrap(vars(method), ncol = n_comparisons_all + 1) +
+  scale_colour_paletteer_d("colorblindr::OkabeIto") +
+  labs(x = "Corpus", y = "Dimension 1", colour = "Subcorpus")
+
+d1_bc
+```
+
+```{r}
+full_all <- bind_rows(
+  list(
+    nini_total_all |>
+      mutate(method = "MAT", .before = doc_id),
+    pseudobiber_stanza_total_all |>
+      mutate(method = "pseudobibeR (Stanza)", .before = doc_id),
+    pseudobiber_spacy_sm_total_all |>
+      mutate(method = "pseudobibeR (spaCy, sm)", .before = doc_id),
+    pseudobiber_spacy_lg_total_all |>
+      mutate(method = "pseudobibeR (spaCy, lg)", .before = doc_id),
+    pybiber_spacy_sm_total_all |>
+      mutate(method = "pybiber (spaCy, sm)", .before = doc_id),
+    pybiber_spacy_trf_total_all |>
+      mutate(method = "pybiber (spaCy, trf)", .before = doc_id),
+    biberplus_total_all |>
+      mutate(method = "BiberPlus (spaCy, sm, 1k tokens)", .before = doc_id),
+    biberplus_10k_total_all |>
+      mutate(method = "BiberPlus (spaCy, sm, 10k tokens)", .before = doc_id),
+    biberpy_total_all |>
+      mutate(method = "Biberpy (spaCy, sm)", .before = doc_id)
+  )
+) |>
+  mutate(
+    subcorpus = factor(subcorpus,
+                            levels = c("quotes", "nonquotes"),
+                            labels = c("Dialogue", "Narration"))
+    )
+
+biber_comparison <- full_scores_egbert_mahlberg |>
+  select(doc_id:subcorpus, Biber_D1) |>
+  mutate(method = "Biber Tagger", .before = doc_id,
+         subcorpus = factor(subcorpus)) |>
+  rename(Dimension1 = Biber_D1) |>
+  bind_rows(full_all |> select(method:Dimension1)) |>
+  mutate(method = fct_inorder(method))
+
+
+mixed_mod <- lmer(Dimension1 ~ corpus + subcorpus + corpus:subcorpus + method + (1|doc_id),
+                  biber_comparison)
+
+model_parameters(mixed_mod)
+
+model_parameters(mixed_mod, standardize = "refit")
+
+model_performance(mixed_mod)
+```
+
+```{r}
+#| fig-width: 18
+#| fig-height: 10
+check_model(mixed_mod)
+```
+
+Stargazer output for the paper:
+```{r}
+#| warning: false
+stargazer(mixed_mod, type = "text",
+          ci = TRUE, digits = 2,
+          star.cutoffs = c(0.05, 0.01, 0.001))
+```
+
+
+
+## Feature-level comparisons
+To find out where the differences between individual systems/language models are
+coming from, we can look at the features underlying the register dimensions.
+
+For this comparison, we'll have a closer look at MAT, pseudobibeR using Stanza
+and spaCy (large language model), pybiber (using the same spaCy model) and
+BiberPlus.
+```{r}
+mat_texts <- nini_zscores |>
+  select(doc_id:subcorpus, `Linguistic feature`, feature_pseudobiber, mean, value, zscore) |>
+  arrange(doc_id, corpus, subcorpus, feature_pseudobiber) |>
+  mutate(system = "MAT: Stanford tagger", .before = "doc_id")
+
+pseudobiber_texts_stanza <- pseudobiber_stanza_zscores |>
+  select(doc_id:subcorpus, `Linguistic feature`, feature_pseudobiber, mean, value, zscore) |>
+  arrange(doc_id, corpus, subcorpus, feature_pseudobiber) |>
+  mutate(system = "pseudobibeR: Stanza", .before = "doc_id")
+
+pseudobiber_texts_spacy_sm <- pseudobiber_spacy_sm_zscores |>
+  select(doc_id:subcorpus, `Linguistic feature`, feature_pseudobiber, mean, value, zscore) |>
+  arrange(doc_id, corpus, subcorpus, feature_pseudobiber) |>
+  mutate(system = "pseudobibeR: spaCy (sm)", .before = "doc_id")
+
+pybiber_texts_spacy_sm <- pybiber_spacy_sm_zscores |>
+  select(doc_id:subcorpus, `Linguistic feature`, feature_pseudobiber, mean, value, zscore) |>
+  arrange(doc_id, corpus, subcorpus, feature_pseudobiber) |>
+  mutate(system = "pybiber: spaCy (sm)", .before = "doc_id")
+
+biberplus_texts <- biberplus_zscores |>
+  select(doc_id:subcorpus, `Linguistic feature`, feature_pseudobiber, mean, value, zscore) |>
+  arrange(doc_id, corpus, subcorpus, feature_pseudobiber) |>
+  mutate(system = "BiberPlus: spaCy (sm)", .before = "doc_id")
+
+biberpy_texts <- biberpy_zscores |>
+  select(doc_id:subcorpus, `Linguistic feature`, feature_pseudobiber, mean, value, zscore) |>
+  arrange(doc_id, corpus, subcorpus, feature_pseudobiber) |>
+  mutate(system = "Biberpy: spaCy (sm)", .before = "doc_id")
+
+comparison <- bind_rows(mat_texts,
+                        pseudobiber_texts_stanza,
+                        pseudobiber_texts_spacy_sm,
+                        pybiber_texts_spacy_sm,
+                        biberplus_texts,
+                        biberpy_texts) |>
+  inner_join(biber_dims, by = "Linguistic feature") |>
+  arrange(doc_id, corpus, subcorpus, feature_pseudobiber, system) |>
+  mutate(system = factor(system,
+                         levels = c("MAT: Stanford tagger", "pseudobibeR: Stanza", "pseudobibeR: spaCy (sm)", "pybiber: spaCy (sm)", "BiberPlus: spaCy (sm)", "Biberpy: spaCy (sm)")))
+
+# comparison |> write_csv("comparison_mat_pseudobiber_pybiber_biberplus_biberpy.csv")
+```
+
+### Dimension 1
+Without filtering, we can immediately see that feature #23 (WH questions) takes
+suspiciously high values for Biberpy. This makes it a little harder to see
+details about the other features.
+
+```{r}
+#| fig-width: 18
+#| fig-height: 10
+comparison |>
+  filter(dim1 != 0) |>
+  mutate(contribution = ifelse(dim1 > 0, "positive", "negative")) |>
+  ggplot(aes(x = `Linguistic feature`, y = zscore, colour = system)) +
+  geom_boxplot(outlier.size = 1, outlier.alpha = .5) +
+  theme(axis.text.x = element_text(angle = -45, hjust = 0), axis.title.y = element_markdown()) +
+  facet_grid(cols = vars(contribution), scales = "free_x", space = "free") +
+  scale_colour_oi(order = c(1, 3, 2, 5, 7, 8, 4, 6, 9)) +
+  labs(y = "<i>z</i>-score", colour = "System", title = "Dimension 1")
+```
+
+We'll use an upper limit for the y-axis to see things a little more clearly.
+
+
+Features that would be removed by the filter:
+
+- 13 (WH questions) is suspiciously high in Biberpy
+- 23 (WH clauses) is lower for pybiber than for all others; the count is very
+  often 0 for individual documents, as pybiber subtracts the counts of features
+  31 and 32
+- 34 (sentence relatives) is practically identical for all systems except
+  Biberpy (much higher)
+- 47 (hedges) is slightly lower for MAT and Biberpy
+
+
+Other observations:
+
+- pseudobibeR, whether with spaCy or Stanza, and pybiber agree on attributive
+  adjectives, as do MAT, BiberPlus and Biberpy -- at a significantly higher
+  level
+- BiberPlus and Biberpy also agree on nouns, but all other systems count more;
+  something similar can be observed for word length and type-token ratio (which
+  shouldn't be all that controversial)
+- BiberPlus counts significantly more prepositions than the other systems
+- Biberpy is the lone outlier for demonstrative pronouns, discourse particles,
+  emphatics and sentence relatives; it also has very high values for THAT
+  deletions
+- MAT and BiberPlus count more non-phrasal coordinations
+- pybiber changed its computation of BE as main verb (with an option to revert
+  it to pseudobibeR's behaviour); it now counts only counts it if a form of *to
+  be* is the root of the sentence (whereas Biber's original rule is more lax);
+  this results in substantially lower counts
+```{r}
+#| fig-width: 18
+#| fig-height: 10
+dim1_comp <- comparison |>
+  filter(dim1 != 0) |>
+  mutate(contribution = ifelse(dim1 > 0, "positive", "negative")) |>
+  ggplot(aes(x = `Linguistic feature`, y = zscore, colour = system)) +
+  geom_boxplot(outlier.size = 1, outlier.alpha = .5) + # linewidth = .4, outlier.size = 1
+  theme(axis.text.x = element_text(angle = -45, hjust = 0), axis.title.y = element_markdown()) +
+  facet_grid(cols = vars(contribution), scales = "free_x", space = "free") +
+  scale_colour_oi(order = c(1, 3, 2, 5, 7, 8, 4, 6, 9)) +
+  labs(y = "<i>z</i>-score", colour = "System", title = "Dimension 1") +
+  coord_cartesian(ylim=c(NA, 10))
+dim1_comp
+```
+
+
+Only keeping features with a mean above 1 in Biber (1988) leaves us with 24 out
+of 28 features:
+```{r}
+#| fig-width: 18
+#| fig-height: 10
+comparison |>
+  filter(dim1 != 0,
+         mean > 1) |>
+  mutate(contribution = ifelse(dim1 > 0, "positive", "negative")) |>
+  ggplot(aes(x = `Linguistic feature`, y = zscore, colour = system)) +
+  geom_boxplot(outlier.size = 1, outlier.alpha = .5) +
+  theme(axis.text.x = element_text(angle = -45, hjust = 0), axis.title.y = element_markdown()) +
+  facet_grid(cols = vars(contribution), scales = "free_x", space = "free") +
+  scale_colour_oi(order = c(1, 3, 2, 5, 7, 8, 4, 6, 9)) +
+  labs(y = "<i>z</i>-score", colour = "System", title = "Dimension 1")
+```
+
+
+### Dimension 2
+BiberPlus has slightly lower values for all features than MAT, pseudobibeR and
+pybiber. Biberpy is missing two features, and counts for past tense and
+synthetic negatives are even lower than those from BiberPlus.
+
+Without filtering:
+```{r}
+dim2_comp <- comparison |>
+  filter(dim2 != 0) |>
+  mutate(contribution = ifelse(dim2 > 0, "positive", "negative")) |>
+  ggplot(aes(x = `Linguistic feature`, y = zscore, colour = system)) +
+  geom_boxplot(outlier.size = 1, outlier.alpha = .5) + # linewidth = .4, outlier.size = 1
+  theme(axis.text.x = element_text(angle = -45, hjust = 0), axis.title.y = element_markdown()) +
+  facet_grid(cols = vars(contribution), scales = "free_x", space = "free") +
+  scale_colour_oi(order = c(1, 3, 2, 5, 7, 8, 4, 6, 9)) +
+  labs(y = "<i>z</i>-score", colour = "System", title = "Dimension 2")
+dim2_comp
+```
+
+With filtering, 5 out of 6 features are used: #25 (present participial clauses)
+not included -- same for all taggers except Biberpy:
+```{r}
+comparison |>
+  filter(dim2 != 0,
+         mean > 1) |>
+  mutate(contribution = ifelse(dim2 > 0, "positive", "negative")) |>
+  ggplot(aes(x = `Linguistic feature`, y = zscore, colour = system)) +
+  geom_boxplot(outlier.size = 1, outlier.alpha = .5) +
+  theme(axis.text.x = element_text(angle = -45, hjust = 0), axis.title.y = element_markdown()) +
+  facet_grid(cols = vars(contribution), scales = "free_x", space = "free") +
+  scale_colour_oi(order = c(1, 3, 2, 5, 7, 8, 4, 6, 9)) +
+  labs(y = "<i>z</i>-score", colour = "System", title = "Dimension 2")
+```
+
+
+### Dimension 3
+Most obvious differences:
+
+- much lower count of adverbs for MAT (and Biberpy, to a lesser extent) → much
+  higher dim. 3
+- slightly higher count of time adverbials for MAT → lower dim. 3
+- lower count of WH relatives in subject position for MAT → lower dim. 3
+- higher count of WH relatives in object position for BiberPlus (somewhat offset
+  by slightly lower counts for WH relatives in subject position and phrasal
+  coordinations, but a slightly lower adverb count also adds to the dim. 3
+  scores)
+
+Without filtering:
+```{r}
+dim3_comp <- comparison |>
+  filter(dim3 != 0) |>
+  mutate(contribution = ifelse(dim3 > 0, "positive", "negative")) |>
+  ggplot(aes(x = `Linguistic feature`, y = zscore, colour = system)) +
+  geom_boxplot(outlier.size = 1, outlier.alpha = .5) + # linewidth = .4, outlier.size = 1
+  theme(axis.text.x = element_text(angle = -45, hjust = 0), axis.title.y = element_markdown()) +
+  facet_grid(cols = vars(contribution), scales = "free_x", space = "free") +
+  scale_colour_oi(order = c(1, 3, 2, 5, 7, 8, 4, 6, 9)) +
+  labs(y = "<i>z</i>-score", colour = "System", title = "Dimension 3")
+dim3_comp
+```
+
+With filtering, 7 out of 8 features are used: 33 (WH relatives: pied pipes) not
+included -- similar for all taggers (slightly lower for Biberpy)
+```{r}
+comparison |>
+  filter(dim3 != 0,
+         mean > 1) |> # 
+  mutate(contribution = ifelse(dim3 > 0, "positive", "negative")) |>
+  ggplot(aes(x = `Linguistic feature`, y = zscore, colour = system)) +
+  geom_boxplot(outlier.size = 1, outlier.alpha = .5) +
+  theme(axis.text.x = element_text(angle = -45, hjust = 0), axis.title.y = element_markdown()) +
+  facet_grid(cols = vars(contribution), scales = "free_x", space = "free") +
+  scale_colour_oi(order = c(1, 3, 2, 5, 7, 8, 4, 6, 9)) +
+  labs(y = "<i>z</i>-score", colour = "System", title = "Dimension 3")
+```
+
+
+
+### Dimension 4
+Since all feature means for dimension 4 in the original study are above 1, all
+features are included with or without filtering. Differences between MAT,
+pseudobibeR and pybiber are marginal -- MAT only counts a few more split
+auxiliaries. BiberPlus, however, counts a lot more split auxiliaries which would
+result in much higher dimension 4 values if not for slightly lower counts for
+four of the other features.
+```{r}
+dim4_comp <- comparison |>
+  filter(dim4 != 0) |> # uses 6/6 features (filter makes no difference)
+  mutate(contribution = ifelse(dim4 > 0, "positive", "negative")) |>
+  ggplot(aes(x = `Linguistic feature`, y = zscore, colour = system)) +
+  geom_boxplot(outlier.size = 1, outlier.alpha = .5) + # linewidth = .4, outlier.size = 1
+  theme(axis.text.x = element_text(angle = -45, hjust = 0), axis.title.y = element_markdown()) +
+  facet_grid(cols = vars(contribution), scales = "free_x", space = "free") +
+  scale_colour_oi(order = c(1, 3, 2, 5, 7, 8, 4, 6, 9)) +
+  labs(y = "<i>z</i>-score", colour = "System", title = "Dimension 4")
+dim4_comp
+```
+
+
+### Dimension 5
+It's hard to see much in this plot, as Biberpy's count of conjuncts seems to be
+absurdly high (also very high for BiberPlus).
+```{r}
+comparison |>
+  filter(dim5 != 0) |>
+  mutate(contribution = ifelse(dim5 > 0, "positive", "negative")) |>
+  ggplot(aes(x = `Linguistic feature`, y = zscore, colour = system)) +
+  geom_boxplot(outlier.size = 1, outlier.alpha = .5) + # linewidth = .4, outlier.size = 1
+  theme(axis.text.x = element_text(angle = -45, hjust = 0), axis.title.y = element_markdown()) +
+  facet_grid(cols = vars(contribution), scales = "free_x", space = "free") +
+  scale_colour_oi(order = c(1, 3, 2, 5, 7, 8, 4, 6, 9)) +
+  labs(y = "<i>z</i>-score", colour = "System", title = "Dimension 5")
+```
+
+For the plot's sake, let's remove Biberpy's count of conjuncts from the picture:
+```{r}
+dim5_comp <- comparison |>
+  filter(dim5 != 0) |>
+  filter(!(feature_pseudobiber == "f_45_conjuncts" & system == "Biberpy: spaCy (sm)")) |>
+  mutate(contribution = ifelse(dim5 > 0, "positive", "negative")) |>
+  ggplot(aes(x = `Linguistic feature`, y = zscore, colour = system)) +
+  geom_boxplot(outlier.size = 1, outlier.alpha = .5) + # linewidth = .4, outlier.size = 1
+  theme(axis.text.x = element_text(angle = -45, hjust = 0), axis.title.y = element_markdown()) +
+  facet_grid(cols = vars(contribution), scales = "free_x", space = "free") +
+  scale_colour_oi(order = c(1, 3, 2, 5, 7, 8, 4, 6, 9)) +
+  labs(y = "<i>z</i>-score", colour = "System", title = "Dimension 5")
+dim5_comp
+```
+
+
+With filtering, only 3 out of 6 features are used. The following are discarded:
+
+- 18 (BY passives)
+- 26 (past participial clauses)
+- 38 (adv. subordinator - other)
+
+Feature 38 in particular is much lower for MAT than for the other systems. This
+alone can explain the lower scores on dimension 5 (as well as the higher scores
+for Stanza).
+```{r}
+comparison |>
+  filter(dim5 != 0,
+         mean > 1) |>
+  mutate(contribution = ifelse(dim5 > 0, "positive", "negative")) |>
+  ggplot(aes(x = `Linguistic feature`, y = zscore, colour = system)) +
+  geom_boxplot(outlier.size = 1, outlier.alpha = .5) +
+  theme(axis.text.x = element_text(angle = -45, hjust = 0), axis.title.y = element_markdown()) +
+  facet_grid(cols = vars(contribution), scales = "free_x", space = "free") +
+  scale_colour_oi(order = c(1, 3, 2, 5, 7, 8, 4, 6, 9)) +
+  labs(y = "<i>z</i>-score", colour = "System", title = "Dimension 5")
+```
+
+
+```{r}
+#| fig-width: 18
+#| fig-height: 10
+design <- "
+  11
+  23
+  45
+"
+
+dim1_comp + dim2_comp + dim3_comp + dim4_comp + dim5_comp +
+  plot_layout(guides = "collect",
+              axis_titles = "collect",
+              design = design)
+# 11x11
+```
+
+
+## Speed comparisons
+Speed comparisons favour pybiber over pseudobibeR. All Python systems using
+spaCy are almost equally fast. Using the GPU instead of the CPU speeds spaCy up
+considerably.
+
+spaCy's transformer model (which requires GPU usage) is a lot slower than its
+more lightweight models. Similarly, Stanza itself, which is also
+transformer-based, takes slightly over an hour to annotate the whole corpus.
+```{r}
+#| message: false
+speed_pseudobiber <- read_csv("output_pseudobiber/quotes_nonquotes_corpus/spacy_timings_ttr100.csv") |>
+  mutate(program = "pseudobibeR", .before = model,
+         time_minutes = round(time_sec / 60)) |>
+  select(-time_sec)
+
+speed_pybiber <- read_csv("output_pybiber/timing_results.csv") |>
+  mutate(program = "pybiber", .before = model,
+         time_minutes = round(time_seconds / 60, 2)) |>
+  select(-time_seconds)
+
+speed_biberplus <- read_csv("output_biberplus/timing_results_no_gpu.csv") |>
+  mutate(program = "BiberPlus", .before = model,
+         time_minutes = round(time_seconds / 60, 2)) |>
+  select(-time_seconds)
+
+speed_biberplus_gpu <- read_csv("output_biberplus/timing_results.csv") |>
+  mutate(program = "BiberPlus (GPU)", .before = model,
+         time_minutes = round(time_seconds / 60, 2)) |>
+  select(-time_seconds)
+
+speed_biberpy <- read_csv("output_biberpy/timing_results.csv") |>
+  mutate(program = "Biberpy", .before = model,
+         model = str_remove(model, "en_core_web_"),
+         time_minutes = round((time_seconds + 67) / 60, 2)) |> # add runtime of biber-dym.py
+  select(-time_seconds)
+
+speed_stanza <- read_csv("output_stanza/timing_results.csv") |>
+  mutate(program = "Stanza", .before = model,
+         model = "combined model",
+         time_minutes = round(time_seconds / 60, 2)) |>
+  select(-time_seconds)
+
+speeds <- bind_rows(speed_pseudobiber, speed_pybiber, speed_biberplus, speed_biberplus_gpu, speed_biberpy, speed_stanza)
+speeds
+```

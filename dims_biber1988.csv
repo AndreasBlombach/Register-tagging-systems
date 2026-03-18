@@ -1,0 +1,55 @@
+Linguistic feature,dim1,dim2,dim3,dim4,dim5
+private verbs,1,0,0,0,0
+THAT deletion,1,0,0,0,0
+contractions,1,0,0,0,0
+present tense,1,0,0,0,0
+second person pronouns,1,0,0,0,0
+DO as pro-verb,1,0,0,0,0
+analytic negation,1,0,0,0,0
+demonstrative pronouns,1,0,0,0,0
+emphatics,1,0,0,0,0
+first person pronouns,1,0,0,0,0
+pronoun IT,1,0,0,0,0
+BE as main verb,1,0,0,0,0
+adv. subordinator - cause,1,0,0,0,0
+discourse particles,1,0,0,0,0
+indefinite pronouns,1,0,0,0,0
+hedges,1,0,0,0,0
+amplifiers,1,0,0,0,0
+sentence relatives,1,0,0,0,0
+WH questions,1,0,0,0,0
+possibility modals,1,0,0,0,0
+non-phrasal coordination,1,0,0,0,0
+WH clauses,1,0,0,0,0
+stranded prepositions,1,0,0,0,0
+nouns,-1,0,0,0,0
+word length,-1,0,0,0,0
+prepositions,-1,0,0,0,0
+type/token ratio,-1,0,0,0,0
+attributive adjectives,-1,0,0,0,0
+past tense,0,1,0,0,0
+third person pronouns,0,1,0,0,0
+perfect aspect verbs,0,1,0,0,0
+public verbs,0,1,0,0,0
+synthetic negation,0,1,0,0,0
+present participial clauses,0,1,0,0,0
+WH relatives: obj. position,0,0,1,0,0
+WH relatives: pied pipes,0,0,1,0,0
+WH relatives: subj. position,0,0,1,0,0
+phrasal coordination,0,0,1,0,0
+nominalizations,0,0,1,0,0
+time adverbials,0,0,-1,0,0
+place adverbials,0,0,-1,0,0
+adverbs,0,0,-1,0,0
+infinitives,0,0,0,1,0
+predictive modals,0,0,0,1,0
+suasive verbs,0,0,0,1,0
+adv. subordinator - condition,0,0,0,1,0
+necessity modals,0,0,0,1,0
+split auxiliaries,0,0,0,1,0
+conjuncts,0,0,0,0,1
+agentless passives,0,0,0,0,1
+past participial clauses,0,0,0,0,1
+BY passives,0,0,0,0,1
+past prt. WHIZ deletions,0,0,0,0,1
+adv. subordinator - other,0,0,0,0,1
