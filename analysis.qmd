@@ -949,6 +949,7 @@ d2 + d3 + d4 + d5 +
               ncol = 1)
 ```
 
+### Biber Tagger
 These are, however, much closer to the results from the Biber Tagger:
 ```{r}
 #| fig-width: 12
@@ -978,6 +979,8 @@ d1_bc <- biber_comparison |>
 
 d1_bc
 ```
+
+
 
 ```{r}
 full_all <- bind_rows(
@@ -1039,6 +1042,33 @@ Stargazer output for the paper:
 stargazer(mixed_mod, type = "text",
           ci = TRUE, digits = 2,
           star.cutoffs = c(0.05, 0.01, 0.001))
+```
+
+
+As requested by one reviewer, here are scatter plots to show the dimension 1
+scores of individual documents -- always comparing the Biber Tagger against one
+other system. The dashed line represents perfect correlation. Points under the
+line mean lower dimension 1 scores for the system in question than for the Biber
+Tagger, points over the line mean higher scores.
+```{r}
+biber_comparison_1v1 <- biber_comparison |>
+  pivot_wider(names_from = method, values_from = Dimension1)
+
+plot_1v1 <- function(method) {
+  biber_comparison_1v1 |>
+    ggplot(aes(x = `Biber Tagger`, y = !!as.name(method), colour = subcorpus, shape = corpus, label = doc_id)) +
+    geom_point() +
+    geom_text(size = 2, vjust = 1.2, colour = "darkgrey") +
+    geom_abline(alpha = .5, linetype = 2)
+}
+
+systems <- levels(biber_comparison$method)
+systems <- systems[systems != "Biber Tagger"]
+
+for (s in systems) {
+  print(plot_1v1(s))
+  Sys.sleep(.5)
+}
 ```
 
 
