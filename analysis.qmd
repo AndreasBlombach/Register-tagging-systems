@@ -31,6 +31,7 @@ library(easystats)
 library(stargazer)
 library(lme4)
 library(ggtext)
+library(emmeans)
 ```
 
 Features -- this is a dataframe containing all linguistic features from Biber
@@ -980,8 +981,6 @@ d1_bc <- biber_comparison |>
 d1_bc
 ```
 
-
-
 ```{r}
 full_all <- bind_rows(
   list(
@@ -1017,10 +1016,63 @@ biber_comparison <- full_scores_egbert_mahlberg |>
          subcorpus = factor(subcorpus)) |>
   rename(Dimension1 = Biber_D1) |>
   bind_rows(full_all |> select(method:Dimension1)) |>
-  mutate(method = fct_inorder(method))
+  mutate(method = fct_inorder(method),
+         segment_id = str_c(doc_id, "_", subcorpus))
+```
 
 
-mixed_mod <- lmer(Dimension1 ~ corpus + subcorpus + corpus:subcorpus + method + (1|doc_id),
+To compare these systems in a linear mixed-effects model, we'll take dimension 1
+scores as the dependent variable. Independent variables will be `corpus`,
+`subcorpus` and `method` (e.g. "pseudobibeR (Stanza)"). We'll also account for
+interactions between corpus and subcorpus as well as method and subcorpus.
+Since each of the 44 novels has been split into two segments (dialogue and
+narration) and there are multiple Dimension 1 scores for each segment (by
+different methods), observations are not independent and we need two random
+effects: novel (`doc_id`) and document/segment (`segment_id`).^[Thanks
+to the anonymous reviewer who pointed out that our original model (`Dimension1 ~
+corpus + subcorpus + corpus:subcorpus + method + (1|doc_id)`) was missing the
+random effect of individual documents and -- possibly -- the interaction of
+model and subcorpus.]
+
+Due to the number of predictors in the model, results are a little hard to grasp
+at first glance:
+
+- `corpus`:
+  All other things being equal (ceteris paribus -> c.p.), meaning all other
+  predictors at their reference levels, Dickens' novels have slightly higher
+  (3.63) dimension 1 scores than other 19th century novels (but wait for the
+  interaction effect with `subcorpus`).
+- `subcorpus`:
+  C.p., dimension 1 scores for narration are *much* lower (23.42 points) than
+  for dialogue, as expected.
+- interaction of `corpus` and `subcorpus`:
+  There is a significant negative interaction here. From the effects of `corpus`
+  and `subcorpus` alone, you'd expect Dickens' scores to be higher in both
+  subcorpora, but for narration, they're actually slightly lower than those of
+  other 19th century novels (+3.63 - 4.41 = -0.78). (C.p., so across methods.)
+- `method` and its interaction with `subcorpus`:
+  All systems differ from the Biber Tagger, but to different extent. Biberpy is
+  clearly the outlier here. BiberPlus stays close to the Biber Tagger for
+  dialogue, but it is quite far away from it for narration (interaction effects
+  of around 6 points). pseudobibeR stays relatively close to the Biber Tagger
+  regardless of subcorpus. For pybiber and MAT, this is true for narration but
+  less so for dialogue.
+
+
+The means and standard deviations for the Biber Tagger results may also help to
+better understand the model's coefficients:
+```{r}
+biber_comparison |>
+  filter(method == "Biber Tagger") |>
+  group_by(corpus, subcorpus) |>
+  summarise(mean = mean(Dimension1),
+            median = median(Dimension1),
+            sd = sd(Dimension1))
+```
+
+```{r}
+mixed_mod <- lmer(Dimension1 ~ corpus + subcorpus + corpus:subcorpus + method + method:subcorpus +
+                    (1|doc_id) + (1|segment_id),
                   biber_comparison)
 
 model_parameters(mixed_mod)
@@ -1030,6 +1082,11 @@ model_parameters(mixed_mod, standardize = "refit")
 model_performance(mixed_mod)
 ```
 
+Model assumptions seem to be mostly met. There appears to be a little
+heteroscedasticity, but as it seems to be leveraged by few outliers, it doesn't
+strike us as concerning. The two very high variance inflation factors disappear
+entirely if we decide to leave out the method:subcorpus interaction (and high
+VIFs for interactions can generally be safely ignored).
 ```{r}
 #| fig-width: 18
 #| fig-height: 10
@@ -1044,8 +1101,63 @@ stargazer(mixed_mod, type = "text",
           star.cutoffs = c(0.05, 0.01, 0.001))
 ```
 
+A closer look at the dialogue/narration contrast across different systems
+reveals that all systems are able to reproduce the distinction, albeit to
+different degrees. MAT, pybiber and especially BiberPlus show smaller contrasts.
+```{r}
+contrasts <- estimate_contrasts(
+    mixed_mod,
+    contrast = "subcorpus",
+    by = "method",
+    comparison = "pairwise",
+    backend = "emmeans",
+    ci = 0.95,
+    p_adjust = "none"
+)
 
-As requested by one reviewer, here are scatter plots to show the dimension 1
+contrasts
+
+contrasts |>
+  as_tibble() |>
+  mutate(method = fct_rev(method)) |>
+  ggplot(aes(x = Difference, y = method)) +
+  geom_vline(
+    xintercept = 0,
+    linetype = "dashed",
+    colour = "grey55"
+  ) +
+  geom_errorbar(aes(xmin = CI_low, xmax = CI_high),
+                width = 0.18,
+                orientation = "y") +
+  geom_point(size = 2.8) +
+  labs(x = "Dimension 1", y = NULL) +
+  geom_text(aes(label = str_c(round(Difference, 2), " [", round(CI_low, 2), ", ", round(CI_high, 2), "]")), size = 3, vjust = -1) +
+  theme(text = element_text(size = 13))
+```
+
+MAT's, Biberplus' and pybiber's contrasts are indeed significantly different
+from those of the Biber Tagger:
+```{r}
+emm <- emmeans(mixed_mod, ~ subcorpus | method)
+
+dn_contrasts <- contrast(
+    emm,
+    method = list("Dialogue - Narration" = c(1, -1))
+)
+
+system_vs_biber <- contrast(
+    dn_contrasts,
+    method = "trt.vs.ctrl",
+    ref = 1,
+    by = NULL,
+    adjust = "dunnett"
+)
+
+summary(system_vs_biber, infer = c(TRUE, TRUE))
+```
+
+
+As requested by a reviewer, here are scatter plots to show the dimension 1
 scores of individual documents -- always comparing the Biber Tagger against one
 other system. The dashed line represents perfect correlation. Points under the
 line mean lower dimension 1 scores for the system in question than for the Biber
@@ -1425,3 +1537,9 @@ speed_stanza <- read_csv("output_stanza/timing_results.csv") |>
 speeds <- bind_rows(speed_pseudobiber, speed_pybiber, speed_biberplus, speed_biberplus_gpu, speed_biberpy, speed_stanza)
 speeds
 ```
+
+## Version information
+```{r}
+sessionInfo()
+```
+
